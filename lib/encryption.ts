@@ -1,97 +1,70 @@
 import crypto from "crypto"
+import type { SealedEnvelope, VitalsPacket } from "./types"
 
-// Generate a key from environment variable or create a default one
-const getEncryptionKey = (): Buffer => {
-  const keyEnv = process.env.ENCRYPTION_KEY
-  if (!keyEnv) {
-    throw new Error("ENCRYPTION_KEY environment variable is not set")
+const IV_BYTES = 12
+const TAG_BYTES = 16
+
+function readKey(name: string): Buffer | null {
+  const value = process.env[name]
+  if (!value) return null
+  const key = Buffer.from(value.trim(), "base64")
+  if (key.length !== 32) {
+    console.error(`${name} must be 32 bytes, base64 encoded. Run: npm run keys`)
+    return null
   }
-  // Ensure the key is exactly 32 bytes (256 bits) for AES-256
-  const key = crypto.scryptSync(keyEnv, "salt", 32)
   return key
 }
 
-/**
- * Encrypts vital data using AES-256-GCM
- * @param data - Plain text data to encrypt
- * @returns Encrypted data in format: iv:encryptedData:authTag (all base64)
- */
-export function encryptVitalData(data: Record<string, any>): string {
-  try {
-    const key = getEncryptionKey()
-    const plaintext = JSON.stringify(data)
-
-    // Generate a random IV (Initialization Vector)
-    const iv = crypto.randomBytes(16)
-
-    // Create cipher
-    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv)
-
-    // Encrypt the data
-    let encryptedData = cipher.update(plaintext, "utf8", "hex")
-    encryptedData += cipher.final("hex")
-
-    // Get authentication tag
-    const authTag = cipher.getAuthTag()
-
-    // Return combined format: iv:encryptedData:authTag (all in base64 for safe transmission)
-    const result = `${iv.toString("base64")}:${encryptedData}:${authTag.toString("base64")}`
-    return result
-  } catch (error) {
-    console.error("Encryption error:", error)
-    throw new Error("Failed to encrypt vital data")
-  }
+function storageKey() {
+  const key = readKey("ENCRYPTION_KEY")
+  if (!key) throw new Error("ENCRYPTION_KEY is missing or invalid")
+  return key
 }
 
-/**
- * Decrypts vital data encrypted with encryptVitalData
- * @param encryptedString - Encrypted data in format: iv:encryptedData:authTag
- * @returns Decrypted data as parsed object
- */
-export function decryptVitalData(encryptedString: string): Record<string, any> {
-  try {
-    const key = getEncryptionKey()
-    const parts = encryptedString.split(":")
-
-    if (parts.length !== 3) {
-      throw new Error("Invalid encrypted data format")
-    }
-
-    const iv = Buffer.from(parts[0], "base64")
-    const encryptedData = parts[1]
-    const authTag = Buffer.from(parts[2], "base64")
-
-    // Create decipher
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv)
-    decipher.setAuthTag(authTag)
-
-    // Decrypt the data
-    let decrypted = decipher.update(encryptedData, "hex", "utf8")
-    decrypted += decipher.final("utf8")
-
-    return JSON.parse(decrypted)
-  } catch (error) {
-    console.error("Decryption error:", error)
-    throw new Error("Failed to decrypt vital data")
-  }
+export function getDeviceKey(ambulanceId: string) {
+  if (!/^AMB\d{3}$/.test(ambulanceId)) return null
+  return readKey(`DEVICE_KEY_${ambulanceId}`)
 }
 
-/**
- * Validates encrypted data integrity
- * @param encryptedString - Encrypted data to validate
- * @returns true if valid format, false otherwise
- */
-export function isValidEncryptedFormat(encryptedString: string): boolean {
+// Stored format: iv:ciphertext:tag (base64 parts)
+export function encryptForStorage(data: unknown) {
+  const iv = crypto.randomBytes(IV_BYTES)
+  const cipher = crypto.createCipheriv("aes-256-gcm", storageKey(), iv)
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(data), "utf8"), cipher.final()])
+  return [iv, ciphertext, cipher.getAuthTag()].map((part) => part.toString("base64")).join(":")
+}
+
+export function decryptFromStorage<T>(stored: string): T {
+  const [iv, ciphertext, tag] = stored.split(":").map((part) => Buffer.from(part, "base64"))
+  if (!iv || !ciphertext || !tag) throw new Error("Bad stored ciphertext")
+
+  const decipher = crypto.createDecipheriv("aes-256-gcm", storageKey(), iv, { authTagLength: TAG_BYTES })
+  decipher.setAuthTag(tag)
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+  return JSON.parse(plaintext.toString("utf8"))
+}
+
+// Returns null instead of throwing, e.g. rows written before a key change.
+export function tryDecrypt<T>(stored: string | null): T | null {
+  if (!stored) return null
   try {
-    const parts = encryptedString.split(":")
-    if (parts.length !== 3) return false
-
-    // Try to decode base64 parts
-    Buffer.from(parts[0], "base64")
-    Buffer.from(parts[2], "base64")
-
-    return true
+    return decryptFromStorage<T>(stored)
   } catch {
-    return false
+    return null
   }
+}
+
+// Counterpart of sealVitals() in ambulance-device.ts. WebCrypto appends the
+// 16 byte tag to the ciphertext, Node wants it separately.
+// Throws on a wrong key, any modified byte, or a changed ambulanceId.
+export function openEnvelope(envelope: SealedEnvelope, deviceKey: Buffer): VitalsPacket {
+  const iv = Buffer.from(envelope.iv, "base64")
+  const sealed = Buffer.from(envelope.ciphertext, "base64")
+  if (iv.length !== IV_BYTES || sealed.length <= TAG_BYTES) throw new Error("Malformed envelope")
+
+  const decipher = crypto.createDecipheriv("aes-256-gcm", deviceKey, iv, { authTagLength: TAG_BYTES })
+  decipher.setAAD(Buffer.from(envelope.ambulanceId, "utf8"))
+  decipher.setAuthTag(sealed.subarray(-TAG_BYTES))
+  const plaintext = Buffer.concat([decipher.update(sealed.subarray(0, -TAG_BYTES)), decipher.final()])
+  return JSON.parse(plaintext.toString("utf8"))
 }

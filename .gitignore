@@ -16,8 +16,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files (secrets never committed; the template is)
 .env*
+!.env.example
 
 # vercel
 .vercel

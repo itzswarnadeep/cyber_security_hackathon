@@ -1,88 +1,95 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { DashboardHeader } from "@/components/dashboard/header"
-import { PatientGrid } from "@/components/dashboard/patient-grid"
-import { AlertPanel } from "@/components/dashboard/alert-panel"
+import { PatientGrid, type DashboardPatient } from "@/components/dashboard/patient-grid"
+import { AlertPanel, type DashboardAlert } from "@/components/dashboard/alert-panel"
 import { VitalsChart } from "@/components/dashboard/vitals-chart"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function DashboardPage() {
-  const [patients, setPatients] = useState<any[]>([])
-  const [alerts, setAlerts] = useState<any[]>([])
+  const router = useRouter()
+  const [staffName, setStaffName] = useState<string | null>(null)
+  const [patients, setPatients] = useState<DashboardPatient[]>([])
+  const [patientsLoading, setPatientsLoading] = useState(true)
+  const [patientsError, setPatientsError] = useState<string | null>(null)
+  const [alerts, setAlerts] = useState<DashboardAlert[]>([])
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
 
-  // Fetch patients and alerts on mount
+  const goToLogin = useCallback(() => router.replace("/login"), [router])
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        // In a real app, we'd fetch from API
-        // For now, we'll load data after a delay to simulate API call
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        setLoading(false)
-      } catch (error) {
-        console.error("Error fetching data:", error)
-        setLoading(false)
-      }
-    }
+    fetch("/api/auth/session")
+      .then(async (res) => {
+        if (!res.ok) return goToLogin()
+        setStaffName((await res.json()).staffName)
+      })
+      .catch(goToLogin)
+  }, [goToLogin])
 
-    fetchData()
-  }, [])
-
-  // Poll for new alerts
+  // patients every 3s, alerts every 5s
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const response = await fetch("/api/alerts/active")
-        if (response.ok) {
-          const data = await response.json()
-          setAlerts(data.alerts)
-        }
-      } catch (error) {
-        console.error("Error fetching alerts:", error)
-      }
-    }, 5000) // Poll every 5 seconds
+    if (!staffName) return
 
-    return () => clearInterval(interval)
-  }, [])
-
-  // Poll every 3 seconds for new patient data
-  useEffect(() => {
     const fetchPatients = async () => {
       try {
-        const response = await fetch("/api/patients/with-vitals")
-        if (response.ok) {
-          const data = await response.json()
-          // Update state if patients exist
-          if (data.patients && data.patients.length > 0) {
-            setPatients(data.patients)
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching patients:", error)
+        const res = await fetch("/api/patients/with-vitals")
+        if (res.status === 401) return goToLogin()
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? res.statusText)
+        setPatients(data.patients)
+        setPatientsError(null)
+      } catch (err) {
+        setPatientsError(err instanceof Error ? err.message : "Could not load patients")
+      } finally {
+        setPatientsLoading(false)
       }
     }
 
-    const interval = setInterval(fetchPatients, 3000)
-    return () => clearInterval(interval)
-  }, [])
+    const fetchAlerts = async () => {
+      try {
+        const res = await fetch("/api/alerts/active")
+        if (res.status === 401) return goToLogin()
+        if (res.ok) setAlerts((await res.json()).alerts)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    fetchPatients()
+    fetchAlerts()
+    const patientsInterval = setInterval(fetchPatients, 3000)
+    const alertsInterval = setInterval(fetchAlerts, 5000)
+    return () => {
+      clearInterval(patientsInterval)
+      clearInterval(alertsInterval)
+    }
+  }, [staffName, goToLogin])
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined)
+    goToLogin()
+  }
+
+  const handleAcknowledged = (alertId: number) => setAlerts((prev) => prev.filter((alert) => alert.id !== alertId))
+
+  if (!staffName) {
+    return <main className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">Checking login...</main>
+  }
 
   return (
     <main className="min-h-screen bg-background">
-      <DashboardHeader />
+      <DashboardHeader staffName={staffName} onLogout={handleLogout} />
 
       <div className="p-6 space-y-6 max-w-7xl mx-auto">
-        {/* Critical Alerts Section */}
         {alerts.length > 0 && (
           <div className="mb-6">
-            <AlertPanel alerts={alerts} />
+            <AlertPanel alerts={alerts} onAcknowledged={handleAcknowledged} />
           </div>
         )}
 
-        {/* Main Dashboard Tabs */}
         <Tabs defaultValue="patients" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="patients">Patient Monitor</TabsTrigger>
@@ -91,14 +98,20 @@ export default function DashboardPage() {
           </TabsList>
 
           <TabsContent value="patients" className="space-y-4">
-            <PatientGrid selectedPatient={selectedPatient} onSelectPatient={setSelectedPatient} patients={patients} />
+            <PatientGrid
+              patients={patients}
+              loading={patientsLoading}
+              error={patientsError}
+              selectedPatient={selectedPatient}
+              onSelectPatient={setSelectedPatient}
+            />
             {selectedPatient && (
               <Card>
                 <CardHeader>
                   <CardTitle>Real-Time Vitals for {selectedPatient}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <VitalsChart patientId={selectedPatient} />
+                  <VitalsChart patientId={selectedPatient} onUnauthorized={goToLogin} />
                 </CardContent>
               </Card>
             )}
@@ -110,7 +123,7 @@ export default function DashboardPage() {
                 <CardTitle>Active Alerts ({alerts.length})</CardTitle>
               </CardHeader>
               <CardContent>
-                <AlertPanel alerts={alerts} />
+                <AlertPanel alerts={alerts} onAcknowledged={handleAcknowledged} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -121,18 +134,22 @@ export default function DashboardPage() {
                 <CardTitle>System Analytics</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground">Total Patients Monitored</p>
-                    <p className="text-2xl font-bold">{patients.length}</p>
+                    <p className="text-sm text-muted-foreground">Patients with live data</p>
+                    <p className="text-2xl font-bold">
+                      {patients.filter((p) => p.vitals).length} / {patients.length}
+                    </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground">Active Alerts</p>
-                    <p className="text-2xl font-bold text-destructive">{alerts.length}</p>
+                    <p className="text-sm text-muted-foreground">Critical right now</p>
+                    <p className="text-2xl font-bold text-destructive">
+                      {patients.filter((p) => p.status === "Critical").length}
+                    </p>
                   </div>
                   <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground">System Uptime</p>
-                    <p className="text-2xl font-bold">99.9%</p>
+                    <p className="text-sm text-muted-foreground">Unacknowledged alerts</p>
+                    <p className="text-2xl font-bold">{alerts.length}</p>
                   </div>
                 </div>
               </CardContent>
