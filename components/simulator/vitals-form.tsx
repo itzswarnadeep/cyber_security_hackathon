@@ -8,15 +8,15 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, CheckCircle, Lock } from "lucide-react"
 import { validateVitals } from "@/lib/vital-validator"
+import type { VitalReadings } from "@/lib/classification"
+import type { TransmitResult } from "@/lib/ambulance-device"
 
 export function VitalsForm({
-  patientId,
-  ambulanceId,
-  onTransmitSuccess,
+  onSend,
+  disabled,
 }: {
-  patientId: string
-  ambulanceId: string
-  onTransmitSuccess: () => void
+  onSend: (vitals: VitalReadings) => Promise<TransmitResult>
+  disabled: boolean
 }) {
   const [formData, setFormData] = useState({
     heartRate: 72,
@@ -32,23 +32,9 @@ export function VitalsForm({
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    const numValue = Number.parseFloat(value)
-
-    // Update form data
-    setFormData((prev) => ({
-      ...prev,
-      [name]: numValue,
-    }))
-
-    // Validate on change
-    const updatedData = { ...formData, [name]: numValue }
-    const validation = validateVitals(updatedData)
-
-    if (!validation.isValid) {
-      setValidationErrors(validation.errors)
-    } else {
-      setValidationErrors([])
-    }
+    const updated = { ...formData, [name]: Number.parseFloat(value) }
+    setFormData(updated)
+    setValidationErrors(validateVitals(updated).errors)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -56,7 +42,6 @@ export function VitalsForm({
     setLoading(true)
     setMessage(null)
 
-    // Final validation
     const validation = validateVitals(formData)
     if (!validation.isValid) {
       setMessage({
@@ -69,25 +54,14 @@ export function VitalsForm({
     }
 
     try {
-      const response = await fetch("/api/vitals/transmit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientId,
-          ambulanceId,
-          ...formData,
-        }),
-      })
+      const { ok, data } = await onSend(formData)
 
-      const data = await response.json()
-
-      if (response.ok) {
+      if (ok) {
         setMessage({
           type: "success",
-          text: `Vitals transmitted securely (encrypted). Status: ${data.classification.status}. Vital ID: ${data.vitalId}`,
+          text: `Sent. Hospital classified it as ${data.status} (reading #${data.vitalId})`,
         })
         setValidationErrors([])
-        onTransmitSuccess()
       } else {
         setMessage({
           type: "error",
@@ -209,7 +183,7 @@ export function VitalsForm({
             </div>
           )}
 
-          <Button type="submit" disabled={loading || validationErrors.length > 0} className="w-full">
+          <Button type="submit" disabled={disabled || loading || validationErrors.length > 0} className="w-full">
             {loading ? "Encrypting & Transmitting..." : "Transmit Vitals (Encrypted)"}
           </Button>
 

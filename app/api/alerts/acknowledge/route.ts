@@ -1,28 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { acknowledgeAlert } from "@/lib/db"
+import { readSession, unauthorized } from "@/lib/auth"
 
-/**
- * Acknowledges an alert
- * POST /api/alerts/acknowledge
- */
-export async function POST(request: NextRequest) {
+// POST /api/alerts/acknowledge  { alertId }  (staff only)
+export async function POST(req: NextRequest) {
+  const session = readSession(req)
+  if (!session) return unauthorized()
+
+  const body = await req.json().catch(() => null)
+  const alertId = Number(body?.alertId)
+  if (!Number.isInteger(alertId) || alertId <= 0) {
+    return NextResponse.json({ error: "alertId must be a positive integer" }, { status: 400 })
+  }
+
   try {
-    const body = await request.json()
-    const { alertId, acknowledgedBy } = body
-
-    if (!alertId || !acknowledgedBy) {
-      return NextResponse.json({ error: "Alert ID and acknowledged by are required" }, { status: 400 })
-    }
-
-    const updatedAlert = await acknowledgeAlert(alertId, acknowledgedBy)
-
-    return NextResponse.json({
-      success: true,
-      message: "Alert acknowledged",
-      alert: updatedAlert,
-    })
+    // name comes from the session, never from the request body
+    const done = await acknowledgeAlert(alertId, session.staffName)
+    if (!done) return NextResponse.json({ error: "Alert not found or already acknowledged" }, { status: 404 })
+    return NextResponse.json({ ok: true })
   } catch (error) {
-    console.error("Error acknowledging alert:", error)
-    return NextResponse.json({ error: "Failed to acknowledge alert" }, { status: 500 })
+    console.error("alerts/acknowledge failed:", error)
+    return NextResponse.json({ error: "Could not acknowledge alert" }, { status: 500 })
   }
 }

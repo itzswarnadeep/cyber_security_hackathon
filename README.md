@@ -1,351 +1,173 @@
-# Secure Real-Time Ambulance Data Transmission System
+<h1 align="center">MEDCARE24</h1>
 
-An advanced IoT-enabled emergency healthcare system combining cybersecurity and real-time data transmission to improve emergency medical response times and patient outcomes.
+<p align="center">
+  <b>Secure, real-time vitals from the ambulance to the hospital.</b><br>
+  Encrypted on the device, verified by the server, live on the doctor's screen.
+</p>
 
-## 🏥 System Overview
+<p align="center">
+  <a href="#recognition"><img src="https://img.shields.io/badge/Hackathon%20for%20Cyber%20Security%202025-Healthcare%20Track%20Winner-2ea44f" alt="Healthcare Track Winner"></a>
+  <img src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white" alt="Next.js 16">
+  <img src="https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white" alt="React 19">
+  <img src="https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white" alt="TypeScript 5">
+  <img src="https://img.shields.io/badge/PostgreSQL-Neon-4169e1?logo=postgresql&logoColor=white" alt="PostgreSQL on Neon">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow" alt="MIT License"></a>
+</p>
 
-This system enables secure, real-time transmission of patient vital signs from ambulances to hospital dashboards with:
+![Hospital dashboard with live patient cards, a critical alert and a vitals trend chart](docs/screenshots/dashboard.png)
+<p align="center"><i>The hospital dashboard: one patient is getting worse on the way in, and the team is alerted before arrival.</i></p>
 
-- **End-to-End Encryption**: AES-256-GCM encryption for all patient data
-- **Real-Time Monitoring**: Live vital signs updates with WebSocket support ready
-- **Intelligent Classification**: Automatic patient condition assessment (Critical/Moderate/Stable)
-- **Smart Alerting**: Automated alerts for critical conditions
-- **HIPAA-Ready Architecture**: Secure data handling and compliance
+## At a glance
 
-## 🏗️ System Architecture
+- **What:** an ambulance streams a patient's vitals to the hospital while it is still on the road.
+- **Why it matters:** the emergency team can prepare early, and nobody on the network can read, change or fake the data.
+- **How:** every reading is encrypted with the ambulance's own key (AES-256-GCM), checked by the server, triaged and stored encrypted.
+- **Proof:** a built-in Security Lab runs real attacks against the API and shows each one being rejected.
 
-### Components
+## The problem
 
-\`\`\`
-┌─────────────────────────────────────────────────────────────┐
-│                    AMBULANCE SIDE                           │
-├─────────────────────────────────────────────────────────────┤
-│  • IoT Sensors (Heart Rate, SpO2, BP, Temperature)         │
-│  • Data Encryption (AES-256-GCM)                           │
-│  • Transmission Module (HTTP POST)                         │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  │ Encrypted Vital Data
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              BACKEND API (Next.js)                          │
-├─────────────────────────────────────────────────────────────┤
-│  • /api/vitals/transmit - Receive & decrypt vitals        │
-│  • /api/vitals/latest - Retrieve patient data             │
-│  • /api/alerts/active - Get active alerts                 │
-│  • /api/alerts/acknowledge - Acknowledge alerts           │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│         DATABASE (PostgreSQL - Neon)                       │
-├─────────────────────────────────────────────────────────────┤
-│  • patients - Patient information                          │
-│  • ambulances - Ambulance fleet data                       │
-│  • vitals - Real-time vital readings                       │
-│  • alerts - Critical condition alerts                      │
-│  • vital_history - Historical analytics                    │
-└─────────────────────────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│         HOSPITAL DASHBOARD (React)                         │
-├─────────────────────────────────────────────────────────────┤
-│  • Patient Monitor - Live vital displays                   │
-│  • Alert Panel - Critical condition notifications          │
-│  • Analytics - System statistics & history                 │
-└─────────────────────────────────────────────────────────────┘
-\`\`\`
+In an emergency, the hospital usually learns about a patient's condition only when the ambulance reaches the door. Sending vitals ahead fixes that, but it creates a new risk. Health data travelling over mobile networks can be intercepted, and worse, altered. A single changed reading could make a critical patient look stable.
 
-## 🔒 Security Features
+MEDCARE24 was built to solve both sides: get the data there early, and make sure it can be trusted when it arrives.
 
-### Encryption
-- **Algorithm**: AES-256-GCM (Galois/Counter Mode)
-- **Key Derivation**: PBKDF2 with 100,000 iterations
-- **IV Generation**: Cryptographically random 16-byte IV
-- **Authentication**: GCM authentication tag for integrity verification
+## How it works
 
-### Data Protection
-- All vitals encrypted before storage
-- Decryption only on hospital side
-- Audit trail for all data access
-- SQL injection prevention with parameterized queries
+```mermaid
+sequenceDiagram
+    participant A as Ambulance device
+    participant S as Hospital server
+    participant DB as Database
+    participant H as Hospital dashboard
+    A->>A: Encrypt reading with the ambulance key
+    A->>S: Send sealed packet (ambulanceId, iv, ciphertext)
+    S->>S: Verify key and auth tag, reject old packets
+    S->>S: Validate values, triage as Critical, Moderate or Stable
+    S->>DB: Store the reading encrypted, raise alert if critical
+    H->>S: Request data with a staff session
+    S->>H: Decrypted vitals, trends and alerts
+```
 
-## 📊 Patient Condition Classification
+1. **Ambulance.** The device encrypts each reading in the browser using the WebCrypto API. The ambulance ID is bound into the encryption, so a packet cannot be passed off as coming from another ambulance.
+2. **Server.** A Next.js API route opens the packet with that ambulance's key. If the key is wrong or a single bit was changed, decryption fails. Packets older than 60 seconds are dropped, and each packet can only be stored once.
+3. **Triage.** Heart rate, SpO2, blood pressure and temperature are checked for impossible values, then scored against triage thresholds. Critical readings create an alert.
+4. **Hospital.** Staff sign in and see live patient cards, a trend chart per patient and alerts to acknowledge.
 
-### Thresholds
+## Security design
 
-| Parameter | Critical | Moderate | Stable |
-|-----------|----------|----------|--------|
-| Heart Rate (bpm) | <40 or >140 | <50 or >120 | 60-100 |
-| SpO₂ (%) | <85 | <90 | ≥95 |
-| Systolic BP (mmHg) | <60 or >200 | <90 or >180 | 100-140 |
-| Diastolic BP (mmHg) | <40 or >120 | <60 or >110 | 70-100 |
-| Temperature (°C) | <32 or >40 | <36 or >38.5 | 36.5-37.5 |
+| Threat | What stops it |
+|---|---|
+| Someone reads the traffic | Only ciphertext leaves the ambulance |
+| A value is changed in transit | The AES-GCM authentication tag no longer matches |
+| A fake ambulance sends data | Without the device key, no valid packet can be made |
+| A captured packet is sent again | 60 second freshness window, plus a unique nonce per packet in the database |
+| The database is leaked | Vitals and alert messages are stored encrypted with a separate storage key |
+| Someone calls the hospital APIs | Every route needs a signed, httpOnly session cookie |
 
-### Classification Logic
-- **Critical**: Any parameter in critical range → CRITICAL status
-- **Moderate**: 2+ parameters in moderate range → CRITICAL status
-- **Moderate**: 1 parameter in moderate range → MODERATE status
-- **Stable**: All parameters normal → STABLE status
+**Why encrypt when HTTPS already exists?** HTTPS protects data only while it moves. Here the data stays encrypted at rest in a third-party database, and the per-ambulance key proves *which* ambulance sent each reading, something HTTPS alone does not do.
 
-## 🚀 Getting Started
+You can test all of this yourself on the simulator page:
 
-### Prerequisites
-- Node.js 18+
-- PostgreSQL database (Neon provided)
-- Environment variables configured
+![Security Lab showing replay, tamper, relabel, spoof and delayed packet attacks, all blocked](docs/screenshots/security-lab.png)
+<p align="center"><i>The Security Lab attacks the real API. Every attack is rejected with a clear reason.</i></p>
 
-### Installation
+## Tech stack
 
-1. **Clone the repository**
-\`\`\`bash
-git clone <your-repo-url>
-cd ambulance-system
-\`\`\`
+| Layer | Choice | Why |
+|---|---|---|
+| App and API | Next.js 16, React 19, TypeScript | One codebase for the UI and the backend routes |
+| Styling | Tailwind CSS, shadcn/ui, Recharts | Fast to build, consistent components, simple charts |
+| Database | PostgreSQL on Neon | Free serverless Postgres that works over HTTP |
+| Encryption | WebCrypto (browser), Node `crypto` (server) | Built into the platform, no extra crypto libraries |
+| Tests | Node built-in test runner | No test framework to install |
 
-2. **Install dependencies**
-\`\`\`bash
+## Getting started
+
+You need Node.js 20 or newer and a free [Neon](https://neon.tech) database.
+
+```bash
+git clone https://github.com/Swaraj-Mandre/cyber_security_hackathon.git
+cd cyber_security_hackathon
 npm install
-\`\`\`
+npm run keys
+```
 
-3. **Set up environment variables**
-\`\`\`bash
-# In your Vercel project settings, add:
-NEON_POSTGRES_URL=postgresql://...
-ENCRYPTION_KEY=your-secret-key-here
-\`\`\`
+Copy `.env.example` to `.env.local` and fill it in:
 
-4. **Initialize database**
-The database schema is automatically created via the `/scripts/01-init-database.sql` file.
+- `DATABASE_URL` from Neon (Dashboard, then Connect)
+- the four lines printed by `npm run keys`
+- any `DASHBOARD_PASSWORD` for hospital staff
 
-5. **Run the development server**
-\`\`\`bash
+Then create the tables and start the app:
+
+```bash
+npm run db:setup
 npm run dev
-\`\`\`
+```
 
-6. **Access the application**
-- Home: http://localhost:3000
-- Dashboard: http://localhost:3000/dashboard
-- Simulator: http://localhost:3000/simulator
+Open [localhost:3000](http://localhost:3000).
 
-## 📡 API Endpoints
+**Two-minute demo**
 
-### Transmit Vital Data
-\`\`\`bash
-POST /api/vitals/transmit
-Content-Type: application/json
+1. Go to `/simulator`, paste `DEVICE_KEY_AMB001` from `.env.local` and start the simulation.
+2. Open `/dashboard` in a second tab and sign in. Patient cards update every few seconds.
+3. Send a reading with a heart rate of 150. A critical alert appears on the dashboard.
+4. Back on the simulator, click **Run all attacks** in the Security Lab.
 
-{
-  "patientId": "PAT001",
-  "ambulanceId": "AMB001",
-  "heartRate": 92,
-  "spo2": 96,
-  "systolicBp": 135,
-  "diastolicBp": 85,
-  "temperature": 37.2
-}
+## Project structure
 
-Response:
-{
-  "success": true,
-  "vitalId": 123,
-  "classification": {
-    "status": "Stable",
-    "riskFactors": [],
-    "score": 30
-  }
-}
-\`\`\`
+```
+app/
+  api/            API routes (transmit, auth, patients, vitals, alerts, health)
+  dashboard/      hospital dashboard
+  simulator/      ambulance simulator and Security Lab
+  login/          staff sign-in
+components/       dashboard and simulator UI
+lib/
+  ambulance-device.ts   encryption on the device (WebCrypto)
+  encryption.ts         decryption and storage encryption on the server
+  auth.ts               signed session cookies
+  classification.ts     triage rules
+  db.ts                 database queries
+scripts/          database schema, setup and key generation
+tests/            encryption and triage tests
+```
 
-### Get Latest Vitals
-\`\`\`bash
-GET /api/vitals/latest?patientId=PAT001
+<details>
+<summary><b>API reference</b></summary>
 
-Response:
-{
-  "success": true,
-  "vital": {
-    "heartRate": 92,
-    "spo2": 96,
-    "status": "Stable",
-    "recordedAt": "2024-11-04T10:30:00Z"
-  }
-}
-\`\`\`
+| Method | Route | Access | Purpose |
+|---|---|---|---|
+| POST | `/api/vitals/transmit` | Ambulance | Receive a sealed packet |
+| POST | `/api/auth/login` | Public | Staff sign-in, sets the session cookie |
+| POST | `/api/auth/logout` | Staff | Clear the session |
+| GET | `/api/auth/session` | Staff | Current staff member |
+| GET | `/api/patients/with-vitals` | Staff | All patients with their latest reading |
+| GET | `/api/vitals/patient/:id` | Staff | Recent readings for one patient |
+| GET | `/api/alerts/active` | Staff | Unacknowledged alerts |
+| POST | `/api/alerts/acknowledge` | Staff | Acknowledge an alert |
+| GET | `/api/health` | Public | Shows which settings are missing, never their values |
 
-### Get Active Alerts
-\`\`\`bash
-GET /api/alerts/active
+</details>
 
-Response:
-{
-  "success": true,
-  "alerts": [
-    {
-      "id": 1,
-      "patientId": "PAT003",
-      "alertLevel": "CRITICAL",
-      "message": "Critical condition detected: Heart rate 145 bpm (critical), SpO2 82% (critical)",
-      "createdAt": "2024-11-04T10:32:00Z"
-    }
-  ],
-  "count": 1
-}
-\`\`\`
+## Tests
 
-### Acknowledge Alert
-\`\`\`bash
-POST /api/alerts/acknowledge
-Content-Type: application/json
+```bash
+npm test
+```
 
-{
-  "alertId": 1,
-  "acknowledgedBy": "Dr. Smith"
-}
+The tests encrypt a packet exactly as the browser does and open it with the server code. They check that a flipped bit, a wrong key and a changed ambulance ID are all rejected, that stored data round-trips, and that triage gives the expected result.
 
-Response:
-{
-  "success": true,
-  "message": "Alert acknowledged"
-}
-\`\`\`
+## Limitations and next steps
 
-## 🧪 Testing with Simulator
+- Staff share one dashboard password. Individual accounts and roles would come next.
+- Keys are symmetric, so the hospital holds each ambulance's key. Public-key signatures would remove that.
+- The dashboard polls every few seconds. WebSockets or server-sent events would make it push-based.
+- Triage thresholds are for demonstration and are not clinically validated. A standard score such as NEWS2, with respiratory rate, is the natural upgrade.
 
-1. **Navigate to Simulator**: http://localhost:3000/simulator
-2. **Select Patient and Ambulance** from dropdowns
-3. **Choose simulation method**:
-   - **Auto Simulation**: Click "Start Simulation" to send vitals every 10 seconds
-   - **Manual Input**: Adjust vital values and click "Transmit Vitals"
-4. **Monitor Dashboard**: http://localhost:3000/dashboard shows all activity
+## Recognition
 
-## 📈 Features by Component
+MEDCARE24 was built by **Team SAHARA** at the **Hackathon for Cyber Security**, a 24-hour event held at MIT Art, Design and Technology University, Pune, on 4 and 5 November 2025. The project won the **Healthcare track**.
 
-### Hospital Dashboard
-- ✅ Patient monitoring grid with real-time status
-- ✅ Critical alert notifications with acknowledgment
-- ✅ Vital signs charts with historical data
-- ✅ System analytics and statistics
-- ✅ Color-coded patient status (Green/Yellow/Red)
+## License
 
-### Ambulance Simulator
-- ✅ Automatic vital data simulation
-- ✅ Manual vital input form
-- ✅ Transmission status tracking
-- ✅ Real-time feedback on data transmission
-- ✅ Multiple patient/ambulance selection
-
-### Backend Security
-- ✅ AES-256-GCM encryption/decryption
-- ✅ Database transaction handling
-- ✅ Input validation and sanitization
-- ✅ Error handling with logging
-- ✅ Rate limiting ready
-
-## 🔄 Real-Time Updates
-
-The system is structured to support WebSocket upgrades:
-
-1. **Current**: HTTP polling (5-10 second intervals)
-2. **Next Phase**: WebSocket connections for true real-time updates
-3. **Implementation**: Ready for Socket.io or native WebSocket integration
-
-## 📝 Database Schema
-
-### Patients Table
-\`\`\`sql
-- id (PRIMARY KEY)
-- patient_id (UNIQUE)
-- name
-- age
-- gender
-- medical_conditions
-- emergency_contact
-\`\`\`
-
-### Vitals Table
-\`\`\`sql
-- id (PRIMARY KEY)
-- patient_id (FOREIGN KEY)
-- ambulance_id
-- heart_rate, spo2, systolic_bp, diastolic_bp, temperature
-- status (Critical/Moderate/Stable)
-- encrypted_data
-- recorded_at
-\`\`\`
-
-### Alerts Table
-\`\`\`sql
-- id (PRIMARY KEY)
-- patient_id (FOREIGN KEY)
-- alert_type
-- alert_level
-- message
-- is_acknowledged
-- acknowledged_by
-- acknowledged_at
-\`\`\`
-
-## 🛠️ Development
-
-### Adding New Features
-
-1. **Add database migrations**: Create new SQL files in `/scripts`
-2. **Create API routes**: Add to `/app/api/`
-3. **Build UI components**: Add to `/components/`
-4. **Update classifications**: Modify `/lib/classification.ts`
-
-### Environment Variables
-
-\`\`\`
-NEON_POSTGRES_URL          # Database URL (provided by Neon)
-ENCRYPTION_KEY             # Secret key for AES encryption (set by you)
-NEXT_PUBLIC_API_URL        # Frontend API base URL (optional)
-\`\`\`
-
-## 🚨 Troubleshooting
-
-### "Database URL is not configured"
-- Verify `NEON_POSTGRES_URL` environment variable is set
-- Check Vercel project settings under "Environment Variables"
-
-### "ENCRYPTION_KEY is not set"
-- Set `ENCRYPTION_KEY` environment variable
-- Example: `ENCRYPTION_KEY=your-super-secret-key-123`
-
-### "Failed to decrypt vital data"
-- Ensure same encryption key used for transmission and reception
-- Check encrypted data format (should be: `base64:hex:base64`)
-
-## 📚 Further Reading
-
-- [AES-256-GCM Security](https://en.wikipedia.org/wiki/Galois/Counter_Mode)
-- [HIPAA Compliance Guidelines](https://www.hhs.gov/hipaa)
-- [Next.js API Routes](https://nextjs.org/docs/app/building-your-application/routing/route-handlers)
-- [PostgreSQL Security](https://www.postgresql.org/docs/current/sql-syntax.html)
-
-## 📄 License
-
-MIT License - See LICENSE file for details
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📞 Support
-
-For issues and questions:
-1. Check the troubleshooting section
-2. Review API documentation
-3. Open an issue on GitHub
-
----
-
-**System Status**: ✅ Production Ready  
-**Last Updated**: November 2024  
-**Version**: 1.0.0
+Released under the [MIT License](LICENSE).

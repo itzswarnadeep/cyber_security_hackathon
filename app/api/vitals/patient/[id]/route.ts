@@ -1,51 +1,26 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getRecentVitals } from "@/lib/db"
-import { decryptVitalData, isValidEncryptedFormat } from "@/lib/encryption"
+import { tryDecrypt } from "@/lib/encryption"
+import { readSession, unauthorized } from "@/lib/auth"
+import type { StoredVitals } from "@/lib/types"
 
-/**
- * Retrieves recent vital readings for a specific patient
- * GET /api/vitals/patient/[id]?limit=20
- */
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+// GET /api/vitals/patient/PAT001?limit=20  (staff only)
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  if (!readSession(req)) return unauthorized()
+
+  const { id } = await params
+  const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 20, 1), 100)
+
   try {
-    const patientId = params.id
-    const limit = Number.parseInt(request.nextUrl.searchParams.get("limit") || "20", 10)
-
-    if (!patientId) {
-      return NextResponse.json({ error: "Patient ID is required" }, { status: 400 })
-    }
-
-    const vitals = await getRecentVitals(patientId, 120) // Last 2 hours
-
-    const decryptedVitals = vitals.slice(-limit).map((vital: any) => {
-      let decryptedData = null
-      if (vital.encrypted_data && isValidEncryptedFormat(vital.encrypted_data)) {
-        try {
-          decryptedData = decryptVitalData(vital.encrypted_data)
-        } catch (error) {
-          console.warn("Could not decrypt vital data")
-        }
-      }
-
-      return {
-        id: vital.id,
-        heartRate: vital.heart_rate,
-        spo2: vital.spo2,
-        systolicBp: vital.systolic_bp,
-        diastolicBp: vital.diastolic_bp,
-        temperature: vital.temperature,
-        status: vital.status,
-        recordedAt: vital.recorded_at,
-      }
+    const rows = await getRecentVitals(id, 120, limit)
+    const vitals = rows.flatMap((row) => {
+      const v = tryDecrypt<StoredVitals>(row.encrypted_data)
+      if (!v) return []
+      return [{ recordedAt: row.recorded_at, heartRate: v.heartRate, spo2: v.spo2, temperature: v.temperature }]
     })
-
-    return NextResponse.json({
-      success: true,
-      vitals: decryptedVitals,
-      count: decryptedVitals.length,
-    })
+    return NextResponse.json({ vitals })
   } catch (error) {
-    console.error("Error retrieving patient vitals:", error)
-    return NextResponse.json({ error: "Failed to retrieve vital data" }, { status: 500 })
+    console.error("vitals/patient failed:", error)
+    return NextResponse.json({ error: "Could not load readings" }, { status: 500 })
   }
 }

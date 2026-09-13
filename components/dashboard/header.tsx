@@ -1,23 +1,27 @@
 "use client"
 
-import { Activity } from "lucide-react"
+import { Activity, LogOut } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
-export function DashboardHeader() {
+export function DashboardHeader({ staffName, onLogout }: { staffName: string; onLogout: () => void }) {
   return (
     <header className="bg-card border-b border-border sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-primary rounded-lg">
             <Activity className="w-6 h-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Hospital Dashboard</h1>
-            <p className="text-sm text-muted-foreground">Real-time Ambulance Vital Monitoring</p>
+            <h1 className="text-2xl font-bold text-primary">MEDCARE24</h1>
+            <p className="text-sm text-muted-foreground">Hospital dashboard</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-green-100 dark:bg-green-900 rounded-lg">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-          <span className="text-sm font-medium text-green-800 dark:text-green-100">System Active</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted-foreground hidden sm:inline">{staffName}</span>
+          <Button variant="outline" size="sm" onClick={onLogout}>
+            <LogOut className="w-4 h-4 mr-2" />
+            Log out
+          </Button>
         </div>
       </div>
     </header>

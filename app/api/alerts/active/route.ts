@@ -1,29 +1,24 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { getActiveAlerts } from "@/lib/db"
+import { tryDecrypt } from "@/lib/encryption"
+import { readSession, unauthorized } from "@/lib/auth"
 
-/**
- * Retrieves all active (unacknowledged) alerts
- * GET /api/alerts/active
- */
-export async function GET() {
+// GET /api/alerts/active  (staff only)
+export async function GET(req: NextRequest) {
+  if (!readSession(req)) return unauthorized()
+
   try {
-    const alerts = await getActiveAlerts()
-
-    return NextResponse.json({
-      success: true,
-      alerts: alerts.map((alert: any) => ({
-        id: alert.id,
-        patientId: alert.patient_id,
-        alertType: alert.alert_type,
-        alertLevel: alert.alert_level,
-        message: alert.message,
-        isAcknowledged: alert.is_acknowledged,
-        createdAt: alert.created_at,
-      })),
-      count: alerts.length,
-    })
+    const rows = await getActiveAlerts()
+    const alerts = rows.map((a) => ({
+      id: a.id,
+      patientId: a.patient_id,
+      alertLevel: a.alert_level,
+      message: tryDecrypt<string>(a.encrypted_message) ?? "(could not decrypt)",
+      createdAt: a.created_at,
+    }))
+    return NextResponse.json({ alerts })
   } catch (error) {
-    console.error("Error retrieving alerts:", error)
-    return NextResponse.json({ error: "Failed to retrieve alerts" }, { status: 500 })
+    console.error("alerts/active failed:", error)
+    return NextResponse.json({ error: "Could not load alerts" }, { status: 500 })
   }
 }

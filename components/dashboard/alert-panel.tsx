@@ -5,27 +5,41 @@ import { AlertCircle, CheckCircle2 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
-export function AlertPanel({ alerts }: { alerts: any[] }) {
+export interface DashboardAlert {
+  id: number
+  patientId: string
+  alertLevel: string
+  message: string
+  createdAt: string
+}
+
+export function AlertPanel({
+  alerts,
+  onAcknowledged,
+}: {
+  alerts: DashboardAlert[]
+  onAcknowledged: (alertId: number) => void
+}) {
   const [acknowledging, setAcknowledging] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleAcknowledge = async (alertId: number) => {
+    setAcknowledging(alertId)
+    setError(null)
     try {
-      setAcknowledging(alertId)
       const response = await fetch("/api/alerts/acknowledge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          alertId,
-          acknowledgedBy: "Dr. Administrator",
-        }),
+        body: JSON.stringify({ alertId }),
       })
-
-      if (response.ok) {
-        // Update UI - alert should be removed from list
-        window.location.reload()
+      if (response.ok || response.status === 404) {
+        onAcknowledged(alertId)
+      } else {
+        const data = await response.json().catch(() => ({}))
+        setError(data.error ?? "Failed to acknowledge alert")
       }
-    } catch (error) {
-      console.error("Error acknowledging alert:", error)
+    } catch {
+      setError("Network error while acknowledging alert")
     } finally {
       setAcknowledging(null)
     }
@@ -37,7 +51,8 @@ export function AlertPanel({ alerts }: { alerts: any[] }) {
 
   return (
     <div className="space-y-3">
-      {alerts.map((alert: any) => (
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {alerts.map((alert) => (
         <Card
           key={alert.id}
           className={`p-4 border-2 ${
